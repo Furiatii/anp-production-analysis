@@ -1,0 +1,9 @@
+data/*.zip
+data/*.csv
+data/**/*.csv
+!data/.gitkeep
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/
