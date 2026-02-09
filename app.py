@@ -83,9 +83,120 @@ selected_fields = st.sidebar.multiselect(
 
 # ── Tabs ─────────────────────────────────────────────────────────────────────
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "Visão Geral", "Decline Curve", "Anomalias", "Comparação de Campos",
+tab0, tab1, tab2, tab3, tab4 = st.tabs([
+    "Sobre a Análise", "Visão Geral", "Decline Curve", "Anomalias", "Comparação de Campos",
 ])
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Tab 0: About the Analysis
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab0:
+    st.header("Sobre a Análise")
+
+    st.markdown("""
+### De onde vêm esses dados?
+
+A ANP (Agência Nacional do Petróleo) publica mensalmente quanto cada poço de petróleo
+produziu no Brasil. Os dados incluem produção de óleo (em barris por dia), gás natural,
+água, e informações sobre o campo, bacia, operador e instalação (FPSO, plataforma fixa, etc.).
+
+Essa ferramenta baixa automaticamente esses dados do portal público da ANP e aplica
+três tipos de análise.
+
+---
+
+### 1. Visão Geral
+
+Mostra o panorama da produção offshore brasileira:
+
+- **Produção por campo ao longo do tempo**: cada linha é um campo (Búzios, Mero, Tupi...).
+  Quando a linha sobe, o campo está produzindo mais. Quando desce, está em declínio ou parada.
+- **Top produtores**: ranking dos campos com maior produção média no período selecionado.
+- **Mapa de calor**: cada célula mostra a intensidade de produção de um campo em um mês.
+  Cores mais quentes = mais produção. Útil para identificar visualmente padrões sazonais
+  ou interrupções.
+
+---
+
+### 2. Decline Curve Analysis (Curva de Declínio)
+
+Todo campo de petróleo segue um ciclo: a produção sobe (ramp-up), atinge um pico,
+e depois cai naturalmente ao longo dos anos conforme o reservatório perde pressão.
+
+O engenheiro J.J. Arps descreveu essa queda com dois modelos matemáticos:
+
+- **Exponencial**: a produção cai a uma taxa fixa por mês. Modelo mais simples e conservador.
+- **Hiperbólico**: a taxa de queda vai diminuindo com o tempo. Mais realista para a maioria dos campos.
+
+**O que os parâmetros significam:**
+
+| Parâmetro | O que é | Exemplo |
+|-----------|---------|---------|
+| **qi** | Produção no pico (bbl/dia) | qi = 50.000 significa que o campo produzia 50 mil barris/dia no auge |
+| **Di** | Taxa de declínio mensal | Di = 0.02 significa queda de ~2% ao mês |
+| **b** | Fator de Arps | b = 0 é exponencial, b > 0 o declínio desacelera (mais otimista) |
+| **R²** | Qualidade do ajuste | Quanto mais perto de 1.0, melhor o modelo explica os dados |
+
+**Como ler o gráfico:**
+- Pontos escuros = produção real registrada pela ANP
+- Linha azul tracejada = modelo ajustado (exponencial ou hiperbólico)
+- Linha vermelha pontilhada = projeção futura baseada no modelo
+
+Se o R² for baixo (< 0.5), significa que o campo não segue um padrão claro de declínio,
+talvez porque ainda esteja em ramp-up ou tenha muitas interrupções.
+
+**Para que serve:** estimar quando um campo vai parar de ser rentável e planejar investimentos.
+
+---
+
+### 3. Detecção de Anomalias
+
+Identifica meses onde a produção de um campo fez algo fora do padrão:
+
+| Tipo | O que detecta | Possíveis causas |
+|------|---------------|------------------|
+| **Queda** | Produção caiu mais de 20% de um mês pro outro | Manutenção programada, falha de equipamento, problema no poço |
+| **Parada** | Produção foi a zero | Shutdown completo, manutenção maior, acidente operacional |
+| **Pico** | Produção saltou muito acima do normal (outlier estatístico) | Novo poço conectado, retorno de manutenção, teste de produção |
+
+**Como ler o gráfico:**
+- Linha = produção mensal do campo
+- Marcadores vermelhos (X) = quedas significativas
+- Marcadores roxos = paradas totais
+- Marcadores verdes = picos atípicos
+
+O limiar de queda é ajustável (padrão: 20%). Os picos são detectados pelo método IQR
+(interquartil range) em janela móvel de 6 meses.
+
+---
+
+### 4. Comparação de Campos (Ramp-up)
+
+Quando um campo novo começa a produzir, a produção sobe gradualmente ao longo de
+meses até atingir o plateau (capacidade máxima).
+
+Essa aba normaliza todas as curvas pelo "mês zero" (primeiro óleo) para permitir
+comparação direta, mesmo que os campos tenham começado a produzir em anos diferentes.
+
+**Métricas da tabela:**
+
+| Métrica | O que significa |
+|---------|-----------------|
+| **Primeiro óleo** | Quando o campo começou a produzir |
+| **Produção máxima** | Maior produção mensal registrada (bbl/dia) |
+| **Meses até pico** | Quanto tempo levou do primeiro óleo ao pico |
+| **Taxa de ramp-up** | Velocidade média de subida (bbl/dia por mês) |
+| **Produção atual** | Último valor registrado |
+
+**Para que serve:** avaliar eficiência operacional. Um campo que atinge o plateau mais
+rápido geralmente indica melhor planejamento de desenvolvimento e conexão de poços.
+""")
+
+    st.divider()
+    st.caption("Fonte dos dados: [ANP - Produção por Poço]"
+               "(https://www.gov.br/anp/pt-br/centrais-de-conteudo/"
+               "dados-abertos/producao-de-petroleo-e-gas-natural-por-poco)")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tab 1: Overview
@@ -93,6 +204,13 @@ tab1, tab2, tab3, tab4 = st.tabs([
 
 with tab1:
     st.header("Visão Geral da Produção")
+
+    with st.expander("O que estou vendo?"):
+        st.markdown(
+            "Panorama da produção offshore brasileira. Cada linha no gráfico é um campo "
+            "(Búzios, Mero, Tupi...). O ranking mostra os maiores produtores por média "
+            "no período. O mapa de calor ajuda a identificar padrões sazonais e interrupções."
+        )
 
     # Key metrics
     col1, col2, col3, col4 = st.columns(4)
@@ -175,6 +293,15 @@ with tab2:
     st.header("Decline Curve Analysis")
     st.caption("Ajuste de curvas de declínio de Arps (exponencial e hiperbólico)")
 
+    with st.expander("O que estou vendo?"):
+        st.markdown(
+            "A produção de um campo cai naturalmente ao longo do tempo. "
+            "Os modelos de Arps ajustam uma curva matemática a essa queda e projetam "
+            "a produção futura. **qi** = produção no pico, **Di** = taxa de declínio, "
+            "**R²** = qualidade do ajuste (perto de 1.0 = bom). "
+            "Se o R² for baixo, o campo pode ainda estar em ramp-up."
+        )
+
     decline_field = st.selectbox(
         "Campo para análise de declínio",
         options=selected_fields if selected_fields else top_fields[:10],
@@ -253,6 +380,15 @@ with tab2:
 
 with tab3:
     st.header("Detecção de Anomalias")
+
+    with st.expander("O que estou vendo?"):
+        st.markdown(
+            "Meses onde a produção fez algo fora do padrão. "
+            "**Queda** = caiu mais de 20% (manutenção, falha). "
+            "**Parada** = foi a zero (shutdown). "
+            "**Pico** = saltou muito acima do normal (novo poço, retorno de manutenção). "
+            "Os marcadores no gráfico mostram onde cada anomalia ocorreu."
+        )
 
     anomaly_field = st.selectbox(
         "Campo",
@@ -349,6 +485,14 @@ with tab3:
 with tab4:
     st.header("Comparação de Campos")
     st.caption("Curvas de ramp-up normalizadas pelo mês de primeiro óleo")
+
+    with st.expander("O que estou vendo?"):
+        st.markdown(
+            "Compara como diferentes campos subiram de produção. "
+            "Todas as curvas começam no 'mês zero' (primeiro óleo), "
+            "permitindo comparar mesmo que os campos tenham começado em anos diferentes. "
+            "Um ramp-up mais rápido geralmente indica melhor planejamento operacional."
+        )
 
     compare_fields = st.multiselect(
         "Campos para comparar",
