@@ -1,6 +1,7 @@
+data/**/*.zip
+data/**/*.csv
 data/*.zip
 data/*.csv
-data/**/*.csv
 !data/.gitkeep
 __pycache__/
 *.pyc
