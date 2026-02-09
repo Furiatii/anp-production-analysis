@@ -127,10 +127,11 @@ def field_monthly_production(
 
     Returns DataFrame with columns: campo, data, production.
     """
-    work = df.copy()
     if campos:
-        pattern = "|".join(c.upper() for c in campos)
-        work = work[work["campo"].str.upper().str.contains(pattern, na=False)]
+        campos_upper = [c.upper() for c in campos]
+        work = df[df["campo"].str.upper().isin(campos_upper)].copy()
+    else:
+        work = df.copy()
 
     if work.empty:
         return pd.DataFrame()

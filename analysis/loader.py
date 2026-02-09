@@ -482,8 +482,8 @@ def load_data(
 
     # Filter by campos if specified
     if campos and "campo" in result.columns:
-        pattern = "|".join(c.upper() for c in campos)
-        result = result[result["campo"].str.upper().str.contains(pattern, na=False)]
+        campos_upper = [c.upper() for c in campos]
+        result = result[result["campo"].str.upper().isin(campos_upper)]
 
     return result
 

@@ -11,16 +11,12 @@ def fpso_monthly_production(df: pd.DataFrame, instalacoes: list[str] | None = No
     Returns DataFrame with: instalacao, data, oleo_bbl_dia, gas_total,
     agua_bbl_dia, n_pocos, tempo_medio_h, eficiencia
     """
-    filt = df.copy()
-    if "instalacao" not in filt.columns:
+    if "instalacao" not in df.columns:
         return pd.DataFrame()
 
-    # Clean installation names
-    filt["instalacao"] = filt["instalacao"].str.strip()
-    filt = filt[filt["instalacao"].str.len() > 0]
-
+    filt = df[df["instalacao"].str.strip().str.len() > 0]
     if instalacoes:
-        filt = filt[filt["instalacao"].isin(instalacoes)]
+        filt = filt[filt["instalacao"].str.strip().isin(instalacoes)]
 
     if filt.empty:
         return pd.DataFrame()
@@ -58,7 +54,7 @@ def top_installations(df: pd.DataFrame, n: int = 20) -> list[str]:
     df_clean = df[df["instalacao"].str.strip().str.len() > 0].copy()
     avg = (
         df_clean.groupby("instalacao")["petroleo_bbl_dia"]
-        .sum()
+        .mean()
         .sort_values(ascending=False)
         .head(n)
     )

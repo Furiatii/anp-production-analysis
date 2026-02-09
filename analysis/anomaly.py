@@ -37,9 +37,9 @@ def detect_anomalies(
     pd.DataFrame with anomaly flags.
     """
     if campo:
-        work = df[df["campo"].str.upper() == campo.upper()].copy()
+        work = df[df["campo"].str.upper() == campo.upper()]
     else:
-        work = df.copy()
+        work = df
 
     if work.empty:
         return pd.DataFrame()

@@ -33,7 +33,8 @@ st.markdown("""
 st.sidebar.title("ANP Production Analysis")
 st.sidebar.caption("Dados públicos de produção de petróleo e gás da ANP")
 
-available_years = list(range(2015, 2026))
+from datetime import datetime
+available_years = list(range(2015, datetime.now().year + 1))
 selected_years = st.sidebar.multiselect(
     "Anos",
     options=available_years,
@@ -49,7 +50,7 @@ selected_ambientes = st.sidebar.multiselect(
 
 # ── Data loading ─────────────────────────────────────────────────────────────
 
-@st.cache_data(show_spinner=False, ttl=3600)
+@st.cache_data(show_spinner="Baixando e processando dados da ANP...", ttl=86400)
 def cached_load(years: tuple, ambientes: tuple):
     return load_data(list(years), list(ambientes))
 
@@ -58,16 +59,7 @@ if not selected_years:
     st.warning("Selecione pelo menos um ano na barra lateral.")
     st.stop()
 
-with st.spinner("Baixando e processando dados da ANP..."):
-    progress = st.progress(0, text="Baixando arquivos...")
-
-    def update_progress(current, total):
-        if total > 0:
-            progress.progress(current / total, text=f"Arquivo {current}/{total}")
-
-    # Use tuple for caching
-    df = cached_load(tuple(sorted(selected_years)), tuple(sorted(selected_ambientes)))
-    progress.empty()
+df = cached_load(tuple(sorted(selected_years)), tuple(sorted(selected_ambientes)))
 
 if df.empty:
     st.error("Nenhum dado encontrado. Verifique a conexão ou os filtros selecionados.")
@@ -492,6 +484,8 @@ with tab3:
     if not anomalies.empty:
         # Timeline with anomalies
         campo_for_plot = anomaly_field if anomaly_field != "Todos" else (selected_fields[0] if selected_fields else top_fields[0])
+        if anomaly_field == "Todos":
+            st.caption(f"Contagem acima considera todos os campos. Gráfico mostra **{campo_for_plot}**.")
         prod_data = field_monthly_production(df, [campo_for_plot])
 
         if not prod_data.empty:
