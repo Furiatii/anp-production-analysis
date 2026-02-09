@@ -425,7 +425,22 @@ with tab2:
             st.plotly_chart(fig, use_container_width=True)
 
         else:
-            st.info(f"Dados insuficientes para ajuste de declínio em **{decline_field}**.")
+            # Check if the field is still in ramp-up
+            field_prod = field_monthly_production(df, [decline_field])
+            if not field_prod.empty:
+                peak_date = field_prod.loc[field_prod["production"].idxmax(), "data"]
+                last_date = field_prod["data"].max()
+                months_after_peak = (last_date.year - peak_date.year) * 12 + (last_date.month - peak_date.month)
+                if months_after_peak < 4:
+                    st.info(
+                        f"**{decline_field}** ainda está em ramp-up ou atingiu o pico recentemente "
+                        f"(pico em {peak_date:%b/%Y}). A análise de declínio precisa de pelo menos "
+                        f"4 meses de dados após o pico de produção."
+                    )
+                else:
+                    st.info(f"Dados insuficientes para ajuste de declínio em **{decline_field}**.")
+            else:
+                st.info(f"Dados insuficientes para ajuste de declínio em **{decline_field}**.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

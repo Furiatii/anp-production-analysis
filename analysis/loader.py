@@ -289,6 +289,51 @@ def _extract_ambiente(filename: str) -> str:
     return "Desconhecido"
 
 
+# Campo name aliases: ANP uses different names for the same field
+# across years and concession types (cessão onerosa vs excedente)
+CAMPO_ALIASES = {
+    "LULA": "TUPI",
+    "SUL DE TUPI": "TUPI",
+    "SUL DE LULA": "TUPI",
+}
+
+# Prefixes to strip (AnC_ = Área não Contratada)
+_STRIP_PREFIXES = ["AnC_", "ANC_"]
+
+# Suffixes that represent the same physical field
+_MERGE_SUFFIXES = ["_ECO"]
+
+
+def _normalize_campo(campo: str) -> str:
+    """Normalize field names to merge variants of the same physical field."""
+    if not isinstance(campo, str):
+        return ""
+    campo = campo.strip()
+    if not campo:
+        return ""
+
+    # Strip known prefixes
+    for prefix in _STRIP_PREFIXES:
+        if campo.startswith(prefix):
+            campo = campo[len(prefix):]
+
+    # Strip known suffixes
+    for suffix in _MERGE_SUFFIXES:
+        if campo.endswith(suffix):
+            campo = campo[: -len(suffix)]
+
+    # Apply direct aliases
+    upper = campo.upper()
+    if upper in CAMPO_ALIASES:
+        campo = CAMPO_ALIASES[upper]
+
+    # Normalize Jubarte sub-areas
+    if "JUBARTE" in campo.upper() or "jubarte" in campo.lower():
+        campo = "JUBARTE"
+
+    return campo
+
+
 def load_data(
     years: list[int] | None = None,
     ambientes: list[str] | None = None,
@@ -411,6 +456,16 @@ def load_data(
         return pd.DataFrame()
 
     result = pd.concat(all_dfs, ignore_index=True)
+
+    # Drop rows with invalid dates (leaked headers/footers)
+    if "data" in result.columns:
+        result = result.dropna(subset=["data"])
+
+    # Normalize campo names (ANP uses different names for the same field)
+    if "campo" in result.columns:
+        result["campo"] = result["campo"].apply(_normalize_campo)
+        # Drop rows where campo is empty after normalization
+        result = result[result["campo"].str.len() > 0]
 
     # Deduplicate: Pré-Sal wells appear in both Mar and Pré-Sal files.
     # Keep Pré-Sal label when available (sort so Pré-Sal comes first).
