@@ -64,16 +64,36 @@ NUMERIC_COLS = [
 ]
 
 
-def _build_urls(years: list[int]) -> list[tuple[int, str]]:
-    """Return (year, url) pairs for the requested years."""
+def _build_urls(years: list[int]) -> list[tuple[int, list[str]]]:
+    """Return (year, [candidate_urls]) pairs for the requested years.
+
+    The ANP uses inconsistent URL naming across years, so we return
+    multiple candidate URLs to try in order for each file.
+    """
     urls = []
     for y in years:
-        if y <= 2022:
-            urls.append((y, f"{BASE_URL}/producao-por-poco-{y}.zip"))
-        else:
-            # 2023+ are monthly ZIPs
+        if y <= 2020:
+            # Annual ZIPs
+            urls.append((y, [f"{BASE_URL}/producao-por-poco-{y}.zip"]))
+        elif y == 2021:
             for m in range(1, 13):
-                urls.append((y, f"{BASE_URL}/{y}/producao-{m:02d}.zip"))
+                candidates = [
+                    f"{BASE_URL}/{y}_{m:02d}_producao.zip",
+                    f"{BASE_URL}/{y}-{m:02d}-producao.zip",
+                ]
+                urls.append((y, candidates))
+        elif y == 2022:
+            for m in range(1, 13):
+                candidates = [
+                    f"{BASE_URL}/{y}/producao-{y}-{m:02d}.zip",
+                    f"{BASE_URL}/{y}/{y}_{m:02d}_producao.zip",
+                    f"{BASE_URL}/{y}_{m:02d}_producao.zip",
+                    f"{BASE_URL}/{y}-{m:02d}-producao.zip",
+                ]
+                urls.append((y, candidates))
+        elif y == 2023:
+            for m in range(1, 13):
+                urls.append((y, [f"{BASE_URL}/{y}/producao-{m:02d}.zip"]))
     return urls
 
 
@@ -306,13 +326,18 @@ def load_data(
     total_steps = len(urls) + len(new_years)
     all_dfs = []
 
-    for idx, (year, url) in enumerate(urls):
+    for idx, (year, candidate_urls) in enumerate(urls):
         if progress_callback:
             progress_callback(idx, total_steps)
 
-        filename = url.split("/")[-1]
-        cache_path = DATA_DIR / f"{year}" / filename
-        zip_path = _download_zip(url, cache_path)
+        # Try each candidate URL until one works
+        zip_path = None
+        for url in candidate_urls:
+            filename = url.split("/")[-1]
+            cache_path = DATA_DIR / f"{year}" / filename
+            zip_path = _download_zip(url, cache_path)
+            if zip_path is not None:
+                break
 
         if zip_path is None:
             continue
