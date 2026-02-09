@@ -294,7 +294,7 @@ def load_data(
     pd.DataFrame
     """
     if years is None:
-        years = [2018, 2019, 2020, 2021, 2022, 2023, 2024]
+        years = [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
     if ambientes is None:
         ambientes = ["Mar", "Pré-Sal"]
 
@@ -331,7 +331,8 @@ def load_data(
         except zipfile.BadZipFile:
             continue
 
-    # Load 2024+ consolidated CSVs
+    # Load 2024+ consolidated CSVs (gov.br download)
+    loaded_years = set()
     for idx, year in enumerate(new_years):
         if progress_callback:
             progress_callback(len(urls) + idx, total_steps)
@@ -351,10 +352,32 @@ def load_data(
         if cache_path.exists() and cache_path.stat().st_size > 100:
             df_new = _parse_csv_2024(cache_path)
             if not df_new.empty:
-                # Filter by ambiente
                 df_new = df_new[df_new["ambiente"].isin(ambientes)]
                 if not df_new.empty:
                     all_dfs.append(df_new)
+                    loaded_years.add(year)
+
+    # Load local standalone CSVs (manually exported from CDP portal)
+    # These use the old format (semicolon-separated, bbl/dia units)
+    for year in new_years:
+        if year in loaded_years:
+            continue
+        year_dir = DATA_DIR / str(year)
+        if not year_dir.exists():
+            continue
+        local_csvs = sorted(year_dir.glob("*.csv"))
+        # Skip the consolidated CSV (already handled above)
+        local_csvs = [f for f in local_csvs if not f.name.startswith("producao_por_poco_")]
+        for csv_path in local_csvs:
+            if csv_path.stat().st_size < 100:
+                continue
+            ambiente = _extract_ambiente(csv_path.name)
+            if ambiente not in ambientes:
+                continue
+            file_bytes = csv_path.read_bytes()
+            df_local = _parse_csv(file_bytes, ambiente)
+            if not df_local.empty:
+                all_dfs.append(df_local)
 
     if progress_callback:
         progress_callback(total_steps, total_steps)
