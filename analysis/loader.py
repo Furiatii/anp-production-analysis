@@ -1,5 +1,6 @@
 """Download and parse ANP production data (oil & gas by well)."""
 
+import calendar
 import io
 import os
 import zipfile
@@ -14,6 +15,15 @@ BASE_URL = (
     "https://www.gov.br/anp/pt-br/centrais-de-conteudo/dados-abertos/"
     "arquivos/arquivos-producao-de-petroleo-e-gas-natural-por-poco"
 )
+
+# 2024+ consolidated CSVs live in a different path
+BASE_URL_2024 = (
+    "https://www.gov.br/anp/pt-br/centrais-de-conteudo/dados-abertos/"
+    "arquivos/arquivos-fase-de-desenvolvimento-e-producao/"
+    "arquivos-producao-de-petroleo-e-gas-natural-nacional/pm"
+)
+
+M3_TO_BBL = 6.28981  # 1 m³ = 6.28981 barrels
 
 # Columns we actually use (position-based extraction after parsing)
 KEEP_COLS = [
@@ -166,6 +176,87 @@ def _parse_csv(file_bytes: bytes, ambiente: str) -> pd.DataFrame:
     return df
 
 
+def _parse_csv_2024(csv_path: Path) -> pd.DataFrame:
+    """Parse the 2024+ consolidated CSV format (comma-separated, m³ units)."""
+    try:
+        df = pd.read_csv(csv_path, encoding="utf-8-sig")
+    except Exception:
+        return pd.DataFrame()
+
+    # Clean column names
+    df.columns = [c.strip("[]") for c in df.columns]
+
+    # Map to standard column names
+    col_rename = {
+        "Estado": "estado",
+        "Bacia": "bacia",
+        "Campo": "campo",
+        "Poço": "poco_anp",
+        "Ambiente": "ambiente",
+        "Instalação": "instalacao",
+        "Mês/Ano": "periodo",
+    }
+    df = df.rename(columns=col_rename)
+
+    # Parse period (MM/YYYY -> date)
+    df["data"] = pd.to_datetime(df["periodo"], format="%m/%Y", errors="coerce")
+    df["ano"] = df["data"].dt.year
+    df["mes"] = df["data"].dt.month
+
+    # Days in month for m³ -> bbl/dia conversion
+    df["_dias"] = df.apply(
+        lambda r: calendar.monthrange(int(r["ano"]), int(r["mes"]))[1]
+        if pd.notna(r["ano"]) else 30, axis=1
+    )
+
+    # Convert m³/month to bbl/dia
+    def _m3_to_bbl_dia(col_name):
+        vals = df[col_name].astype(str).str.replace(",", ".").str.strip()
+        return pd.to_numeric(vals, errors="coerce").fillna(0) * M3_TO_BBL / df["_dias"]
+
+    oil_col = "Produção de Óleo (m³)"
+    cond_col = "Produção de Condensado (m³)"
+    gas_a_col = "Produção de Gás Associado (Mm³)"
+    gas_n_col = "Produção de Gás Não Associado (Mm³)"
+    water_col = "Produção de Água (m³)"
+
+    if oil_col in df.columns:
+        df["oleo_bbl_dia"] = _m3_to_bbl_dia(oil_col)
+    if cond_col in df.columns:
+        df["condensado_bbl_dia"] = _m3_to_bbl_dia(cond_col)
+    if water_col in df.columns:
+        df["agua_bbl_dia"] = _m3_to_bbl_dia(water_col)
+
+    df["petroleo_bbl_dia"] = df.get("oleo_bbl_dia", 0) + df.get("condensado_bbl_dia", 0)
+
+    # Gas: keep in Mm³/dia (divide monthly total by days)
+    for gas_col, target in [(gas_a_col, "gas_associado"), (gas_n_col, "gas_nao_associado")]:
+        if gas_col in df.columns:
+            vals = df[gas_col].astype(str).str.replace(",", ".").str.strip()
+            df[target] = pd.to_numeric(vals, errors="coerce").fillna(0) / df["_dias"]
+
+    df["gas_total"] = df.get("gas_associado", 0) + df.get("gas_nao_associado", 0)
+
+    # Normalize ambiente
+    df["ambiente"] = df["ambiente"].str.upper().map(
+        {"MAR": "Mar", "PRE-SAL": "Pré-Sal", "TERRA": "Terra"}
+    ).fillna("Mar")
+
+    # Fill missing columns with defaults
+    for col in ["poco_operador", "operador", "contrato", "tipo_instalacao",
+                 "tempo_producao_h", "gas_royalties", "grau_api"]:
+        if col not in df.columns:
+            df[col] = 0 if col in NUMERIC_COLS else ""
+
+    # Drop temp columns
+    df = df.drop(columns=["_dias"], errors="ignore")
+
+    # Keep only standard columns
+    keep = [c for c in KEEP_COLS if c in df.columns] + ["ambiente", "data", "ano", "mes"]
+    extra = [c for c in df.columns if c in keep]
+    return df[extra].copy()
+
+
 def _extract_ambiente(filename: str) -> str:
     """Detect ambiente (Mar, Pré-Sal, Terra) from filename."""
     lower = filename.lower()
@@ -203,16 +294,21 @@ def load_data(
     pd.DataFrame
     """
     if years is None:
-        years = [2018, 2019, 2020, 2021, 2022, 2023]
+        years = [2018, 2019, 2020, 2021, 2022, 2023, 2024]
     if ambientes is None:
         ambientes = ["Mar", "Pré-Sal"]
 
-    urls = _build_urls(years)
+    # Split years into old format (<=2023) and new format (2024+)
+    old_years = [y for y in years if y <= 2023]
+    new_years = [y for y in years if y >= 2024]
+
+    urls = _build_urls(old_years)
+    total_steps = len(urls) + len(new_years)
     all_dfs = []
 
     for idx, (year, url) in enumerate(urls):
         if progress_callback:
-            progress_callback(idx, len(urls))
+            progress_callback(idx, total_steps)
 
         filename = url.split("/")[-1]
         cache_path = DATA_DIR / f"{year}" / filename
@@ -235,8 +331,33 @@ def load_data(
         except zipfile.BadZipFile:
             continue
 
+    # Load 2024+ consolidated CSVs
+    for idx, year in enumerate(new_years):
+        if progress_callback:
+            progress_callback(len(urls) + idx, total_steps)
+
+        csv_url = f"{BASE_URL_2024}/producao_por_poco_{year}.csv"
+        cache_path = DATA_DIR / f"{year}" / f"producao_por_poco_{year}.csv"
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if not (cache_path.exists() and cache_path.stat().st_size > 100):
+            try:
+                resp = requests.get(csv_url, timeout=60)
+                if resp.status_code == 200:
+                    cache_path.write_bytes(resp.content)
+            except requests.RequestException:
+                pass
+
+        if cache_path.exists() and cache_path.stat().st_size > 100:
+            df_new = _parse_csv_2024(cache_path)
+            if not df_new.empty:
+                # Filter by ambiente
+                df_new = df_new[df_new["ambiente"].isin(ambientes)]
+                if not df_new.empty:
+                    all_dfs.append(df_new)
+
     if progress_callback:
-        progress_callback(len(urls), len(urls))
+        progress_callback(total_steps, total_steps)
 
     if not all_dfs:
         return pd.DataFrame()

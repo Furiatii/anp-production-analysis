@@ -31,11 +31,11 @@ st.markdown("""
 st.sidebar.title("ANP Production Analysis")
 st.sidebar.caption("Dados públicos de produção de petróleo e gás da ANP")
 
-available_years = list(range(2015, 2024))
+available_years = list(range(2015, 2025))
 selected_years = st.sidebar.multiselect(
     "Anos",
     options=available_years,
-    default=[2020, 2021, 2022, 2023],
+    default=[2020, 2021, 2022, 2023, 2024],
 )
 
 ambiente_options = ["Mar", "Pré-Sal"]
