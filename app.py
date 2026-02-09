@@ -10,6 +10,8 @@ from analysis.loader import load_data, get_available_fields
 from analysis.decline import fit_decline_curve, get_decline_dates
 from analysis.anomaly import detect_anomalies, anomaly_summary
 from analysis.compare import compute_rampup, top_fields_by_production, field_monthly_production
+from analysis.watercut import compute_watercut, compute_gor, watercut_summary
+from analysis.fpso import fpso_monthly_production, top_installations, fpso_summary
 
 st.set_page_config(
     page_title="ANP Production Analysis",
@@ -83,8 +85,9 @@ selected_fields = st.sidebar.multiselect(
 
 # ── Tabs ─────────────────────────────────────────────────────────────────────
 
-tab0, tab1, tab2, tab3, tab4 = st.tabs([
-    "Sobre a Análise", "Visão Geral", "Decline Curve", "Anomalias", "Comparação de Campos",
+tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "Sobre a Análise", "Visão Geral", "Decline Curve", "Anomalias",
+    "Comparação de Campos", "Water Cut & GOR", "Visão por FPSO",
 ])
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -191,6 +194,57 @@ comparação direta, mesmo que os campos tenham começado a produzir em anos dif
 
 **Para que serve:** avaliar eficiência operacional. Um campo que atinge o plateau mais
 rápido geralmente indica melhor planejamento de desenvolvimento e conexão de poços.
+
+---
+
+### 5. Water Cut (BSW) e GOR
+
+**Water Cut (BSW)** mede a porcentagem de água no líquido total produzido:
+
+    BSW = água / (água + óleo) × 100%
+
+Todo poço de petróleo produz água junto com o óleo. No início da vida do poço, a proporção
+de água é baixa. Com o tempo, a água do reservatório começa a chegar ao poço (water breakthrough)
+e o BSW sobe. Quando o BSW fica muito alto (acima de 90-95%), o poço pode deixar de ser
+economicamente viável.
+
+**GOR (Gas-Oil Ratio)** mede quanto gás é produzido para cada unidade de óleo:
+
+    GOR = gás (m³/dia) / óleo (m³/dia)
+
+Mudanças no GOR indicam comportamento do reservatório. Um GOR subindo pode significar que
+o gás do reservatório está se expandindo (gas cap expansion) ou que o poço está produzindo
+de uma zona com mais gás.
+
+| Indicador | Sinal | Possível causa |
+|-----------|-------|----------------|
+| BSW subindo | Water breakthrough | Reservatório maduro, injeção de água chegando |
+| BSW estável | Produção saudável | Boa gestão do reservatório |
+| GOR subindo | Mais gás por barril | Expansão do cap de gás, depleção |
+| GOR estável | Reservatório estável | Mecanismo de drive consistente |
+
+---
+
+### 6. Visão por FPSO
+
+Agrega a produção de todos os poços conectados a cada instalação (FPSO, plataforma fixa, etc.).
+
+Um FPSO (Floating Production, Storage and Offloading) é a unidade que recebe o petróleo
+dos poços submarinos, processa e armazena até ser transferido para navios.
+
+**Métricas por FPSO:**
+
+| Métrica | O que significa |
+|---------|-----------------|
+| **Produção total** | Soma da produção de todos os poços conectados |
+| **Poços ativos** | Quantos poços estão produzindo naquele mês |
+| **Produção por poço** | Média de produção por poço conectado |
+| **Eficiência operacional** | % do tempo que a plataforma ficou produzindo no mês |
+| **BSW** | Water cut da plataforma (água no total líquido) |
+
+**Para que serve:** comparar desempenho entre plataformas e identificar quais operam
+com mais eficiência. Por exemplo, o FPSO P-78 (Búzios) pode ser comparado ao P-70
+do mesmo campo para avaliar ramp-up.
 """)
 
     st.divider()
@@ -541,6 +595,187 @@ with tab4:
             st.info("Dados insuficientes para os campos selecionados.")
     else:
         st.info("Selecione campos para comparar.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Tab 5: Water Cut & GOR
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab5:
+    st.header("Water Cut (BSW) e Gas-Oil Ratio (GOR)")
+
+    with st.expander("O que estou vendo?"):
+        st.markdown(
+            "**Water Cut (BSW)** = % de água no líquido total. Sobe ao longo da vida do campo. "
+            "**GOR** = razão gás/óleo (m³/m³). Mudanças indicam comportamento do reservatório. "
+            "BSW subindo = water breakthrough (reservatório maduro). GOR subindo = expansão do cap de gás."
+        )
+
+    wc_fields = st.multiselect(
+        "Campos",
+        options=selected_fields if selected_fields else top_fields[:15],
+        default=(selected_fields[:5] if selected_fields else top_fields[:5]),
+        key="wc_fields",
+    )
+
+    if wc_fields:
+        wc_tab, gor_tab = st.tabs(["Water Cut (BSW)", "GOR"])
+
+        with wc_tab:
+            wc_df = compute_watercut(df, wc_fields)
+            if not wc_df.empty:
+                fig_wc = px.line(
+                    wc_df,
+                    x="data", y="watercut", color="campo",
+                    labels={"data": "Data", "watercut": "Water Cut (%)", "campo": "Campo"},
+                )
+                fig_wc.update_layout(height=500, hovermode="x unified")
+                fig_wc.add_hline(y=50, line_dash="dot", line_color="red",
+                                 annotation_text="50% BSW", annotation_position="top right")
+                st.plotly_chart(fig_wc, use_container_width=True)
+
+                # Summary table
+                st.subheader("Resumo por Campo")
+                wc_summary = watercut_summary(wc_df)
+                if not wc_summary.empty:
+                    st.dataframe(
+                        wc_summary.rename(columns={
+                            "campo": "Campo",
+                            "bsw_atual": "BSW atual (%)",
+                            "bsw_medio": "BSW médio (%)",
+                            "tendencia_pp": "Tendência (p.p.)",
+                            "status": "Status",
+                        }),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+            else:
+                st.info("Sem dados de água para os campos selecionados.")
+
+        with gor_tab:
+            gor_df = compute_gor(df, wc_fields)
+            if not gor_df.empty:
+                fig_gor = px.line(
+                    gor_df,
+                    x="data", y="gor", color="campo",
+                    labels={"data": "Data", "gor": "GOR (m³/m³)", "campo": "Campo"},
+                )
+                fig_gor.update_layout(height=500, hovermode="x unified")
+                st.plotly_chart(fig_gor, use_container_width=True)
+
+                # GOR summary: current + average per field
+                gor_summary = []
+                for campo, grp in gor_df.groupby("campo"):
+                    grp = grp.sort_values("data")
+                    gor_summary.append({
+                        "Campo": campo,
+                        "GOR atual (m³/m³)": f"{grp['gor'].iloc[-1]:,.0f}",
+                        "GOR médio (m³/m³)": f"{grp['gor'].mean():,.0f}",
+                        "Produção atual (bbl/dia)": f"{grp['oleo_bbl_dia'].iloc[-1]:,.0f}",
+                    })
+                st.dataframe(pd.DataFrame(gor_summary), use_container_width=True, hide_index=True)
+            else:
+                st.info("Sem dados de gás para os campos selecionados.")
+    else:
+        st.info("Selecione campos para analisar.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Tab 6: FPSO View
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab6:
+    st.header("Visão por Instalação (FPSO)")
+    st.caption("Produção agregada por plataforma, eficiência operacional e poços ativos")
+
+    with st.expander("O que estou vendo?"):
+        st.markdown(
+            "Produção total de cada FPSO/plataforma, somando todos os poços conectados. "
+            "**Eficiência** = % do tempo que produziu no mês. "
+            "**Produção por poço** = média por poço conectado. "
+            "Permite comparar plataformas do mesmo campo (ex: P-67 vs P-70 vs P-78 em Búzios)."
+        )
+
+    top_inst = top_installations(df, n=30)
+
+    selected_inst = st.multiselect(
+        "Instalações",
+        options=top_inst,
+        default=top_inst[:5] if top_inst else [],
+        key="fpso_select",
+    )
+
+    if selected_inst:
+        fpso_df = fpso_monthly_production(df, selected_inst)
+
+        if not fpso_df.empty:
+            # Production over time
+            st.subheader("Produção total por instalação")
+            fig_fpso = px.line(
+                fpso_df,
+                x="data", y="oleo_bbl_dia", color="instalacao",
+                labels={"data": "Data", "oleo_bbl_dia": "Petróleo (bbl/dia)", "instalacao": "Instalação"},
+            )
+            fig_fpso.update_layout(height=500, hovermode="x unified")
+            st.plotly_chart(fig_fpso, use_container_width=True)
+
+            # Wells and production per well
+            col_a, col_b = st.columns(2)
+
+            with col_a:
+                st.subheader("Poços ativos")
+                fig_wells = px.line(
+                    fpso_df,
+                    x="data", y="n_pocos", color="instalacao",
+                    labels={"data": "Data", "n_pocos": "Poços ativos", "instalacao": "Instalação"},
+                )
+                fig_wells.update_layout(height=400, hovermode="x unified")
+                st.plotly_chart(fig_wells, use_container_width=True)
+
+            with col_b:
+                st.subheader("Produção por poço")
+                fig_ppw = px.line(
+                    fpso_df,
+                    x="data", y="oleo_por_poco", color="instalacao",
+                    labels={"data": "Data", "oleo_por_poco": "bbl/dia por poço", "instalacao": "Instalação"},
+                )
+                fig_ppw.update_layout(height=400, hovermode="x unified")
+                st.plotly_chart(fig_ppw, use_container_width=True)
+
+            # Efficiency
+            st.subheader("Eficiência operacional")
+            fig_eff = px.line(
+                fpso_df,
+                x="data", y="eficiencia", color="instalacao",
+                labels={"data": "Data", "eficiencia": "Eficiência (%)", "instalacao": "Instalação"},
+            )
+            fig_eff.update_layout(height=400, hovermode="x unified")
+            fig_eff.add_hline(y=95, line_dash="dot", line_color="green",
+                             annotation_text="95% target", annotation_position="top right")
+            st.plotly_chart(fig_eff, use_container_width=True)
+
+            # Summary table
+            st.subheader("Resumo das Instalações")
+            summary = fpso_summary(df, selected_inst)
+            if not summary.empty:
+                display = summary.copy()
+                display["primeiro_registro"] = display["primeiro_registro"].dt.strftime("%b/%Y")
+                st.dataframe(
+                    display.rename(columns={
+                        "instalacao": "Instalação",
+                        "prod_atual_bbl_dia": "Produção atual (bbl/dia)",
+                        "n_pocos": "Poços ativos",
+                        "bsw_pct": "BSW (%)",
+                        "eficiencia_pct": "Eficiência (%)",
+                        "primeiro_registro": "Primeiro registro",
+                    }),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+        else:
+            st.info("Sem dados para as instalações selecionadas.")
+    else:
+        st.info("Selecione instalações para analisar.")
 
 
 # ── Footer ───────────────────────────────────────────────────────────────────
